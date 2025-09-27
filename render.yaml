@@ -1,7 +1,5 @@
 services:
   - type: web
     name: signia-app
-    env: python
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "streamlit run app_streamlit.py --server.port $PORT --server.address 0.0.0.0"
+    env: docker
     plan: free

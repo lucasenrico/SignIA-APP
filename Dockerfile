@@ -1,24 +1,15 @@
-# Python 3.10 + sistema mínimo
+# Imagen base con Python 3.10
 FROM python:3.10-slim
 
-# Dependencias del sistema necesarias para OpenCV/Mediapipe
-RUN apt-get update && apt-get install -y \
-    libgl1 \
-    libglib2.0-0 \
- && rm -rf /var/lib/apt/lists/*
-
-# Directorio de trabajo
+# Crear directorio de trabajo
 WORKDIR /app
 
-# Instalar dependencias Python
+# Copiar dependencias e instalarlas
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el resto del repo (código + modelos .joblib)
+# Copiar todo el código del repo
 COPY . .
 
-# Exponer puerto (Render ignora EXPOSE pero no molesta)
-EXPOSE 10000
-
-# Comando de arranque para Streamlit en Render
+# Comando para arrancar Streamlit en Render
 CMD ["streamlit", "run", "app_streamlit.py", "--server.port=10000", "--server.address=0.0.0.0"]

@@ -42,10 +42,6 @@ if img_file is not None:
     bytes_data = img_file.getvalue()
     nparr = np.frombuffer(bytes_data, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    # 💡 invertir para corregir el espejo de st.camera_input
-    frame = cv2.flip(frame, 1)
-
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
     # Procesar con mediapipe
@@ -55,7 +51,6 @@ if img_file is not None:
         min_detection_confidence=0.8
     ) as hands:
         result = hands.process(rgb)
-
         if result.multi_hand_landmarks:
             pts = np.array([[lm.x, lm.y, lm.z] for lm in result.multi_hand_landmarks[0].landmark], dtype=float)
             seq = normalize_seq_xy(pts)

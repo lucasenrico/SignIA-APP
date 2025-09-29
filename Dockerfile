@@ -1,6 +1,12 @@
 # Imagen base con Python 3.10
 FROM python:3.10-slim
 
+# Instalar dependencias de sistema necesarias para OpenCV/mediapipe
+RUN apt-get update && apt-get install -y \
+    libgl1 \
+    libglib2.0-0 \
+ && rm -rf /var/lib/apt/lists/*
+
 # Crear directorio de trabajo
 WORKDIR /app
 

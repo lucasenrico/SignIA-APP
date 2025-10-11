@@ -6,7 +6,12 @@ import numpy as np
 import cv2
 import mediapipe as mp
 from collections import deque, Counter
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
+from streamlit_webrtc import (
+    webrtc_streamer,
+    VideoProcessorBase,
+    RTCConfiguration,
+    WebRtcMode,
+)
 
 st.set_page_config(page_title="SIGNIA - LSA en tiempo real", layout="wide")
 st.title("SIGNIA – Reconocimiento de señas (tiempo real)")
@@ -16,12 +21,8 @@ st.title("SIGNIA – Reconocimiento de señas (tiempo real)")
 # =========================
 @st.cache_resource
 def load_models():
-    try:
-        m_izq = load("modelo_letras_izq_rf.joblib")["model"]
-        m_der = load("modelo_letras_der_rf.joblib")["model"]
-    except Exception as e:
-        st.error(f"No pude cargar los modelos .joblib: {e}")
-        st.stop()
+    m_izq = load("modelo_letras_izq_rf.joblib")["model"]
+    m_der = load("modelo_letras_der_rf.joblib")["model"]
     return m_izq, m_der
 
 MODEL_IZQ, MODEL_DER = load_models()
@@ -85,9 +86,9 @@ st.info(
 )
 
 # =========================
-# Video Transformer
+# Procesador de video (nueva API)
 # =========================
-class HandSignTransformer(VideoTransformerBase):
+class HandSignProcessor(VideoProcessorBase):
     def __init__(self):
         self.hands = mp.solutions.hands.Hands(
             static_image_mode=False,
@@ -99,8 +100,12 @@ class HandSignTransformer(VideoTransformerBase):
         self.last_preds = deque(maxlen=5)
         self.current_pred = "…"
 
-    def transform(self, frame):
-        # Frame a ndarray BGR
+    def recv(self, frame):
+        """
+        Nueva API: recibimos av.VideoFrame, devolvemos av.VideoFrame.
+        """
+        import av  # import local para tiempos de carga
+
         img = frame.to_ndarray(format="bgr24")
 
         # Corregir espejo si está activado
@@ -148,28 +153,27 @@ class HandSignTransformer(VideoTransformerBase):
             (255, 255, 255),
             2,
         )
-        return img
+
+        # Devolver como av.VideoFrame
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 # =========================
-# Lanzar WebRTC
+# Lanzar WebRTC (nueva API)
 # =========================
 webrtc_ctx = webrtc_streamer(
     key="signia-rtc",
-    video_transformer_factory=HandSignTransformer,
+    mode=WebRtcMode.SENDRECV,
     rtc_configuration=rtc_cfg,
     media_stream_constraints={
-        "video": {
-            "facingMode": "user",
-            "width": {"ideal": 1280},
-            "height": {"ideal": 720},
-        },
+        "video": {"facingMode": "user", "width": {"ideal": 1280}, "height": {"ideal": 720}},
         "audio": False,
     },
-    async_transform=True,
+    video_processor_factory=HandSignProcessor,  # <-- nueva API
+    async_processing=True,                      # evita bloqueos si el procesamiento tarda
     video_html_attrs={"playsinline": True, "autoPlay": True, "muted": True, "controls": False},
 )
 
-# Mostrar estado en la UI (útil para debug)
+# Estado en la UI (útil para debug)
 if webrtc_ctx is not None:
     with st.sidebar:
         st.write("Estado:", "playing ✅" if webrtc_ctx.state.playing else "stopped ⛔")

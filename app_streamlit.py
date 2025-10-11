@@ -1,4 +1,9 @@
-# app_streamlit.py
+import os, time, streamlit_webrtc
+
+BUILD_TAG = os.getenv("RENDER_GIT_COMMIT", "sin_sha")[:7]  # si Render lo expone
+FILE_MTIME = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(__file__)))
+
+st.caption(f"🧱 Build: {BUILD_TAG} | 📄 app_streamlit.py mtime: {FILE_MTIME} | webrtc {streamlit_webrtc.__version__}")
 import os
 import streamlit as st
 from joblib import load
@@ -177,3 +182,4 @@ webrtc_ctx = webrtc_streamer(
 if webrtc_ctx is not None:
     with st.sidebar:
         st.write("Estado:", "playing ✅" if webrtc_ctx.state.playing else "stopped ⛔")
+

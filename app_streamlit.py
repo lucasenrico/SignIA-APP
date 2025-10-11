@@ -1,3 +1,5 @@
+# app_streamlit.py
+import os
 import streamlit as st
 from joblib import load
 import numpy as np
@@ -9,35 +11,82 @@ from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfigura
 st.set_page_config(page_title="SIGNIA - LSA en tiempo real", layout="wide")
 st.title("SIGNIA – Reconocimiento de señas (tiempo real)")
 
-# ---- Modelos ----
+# =========================
+# Carga de modelos (cache)
+# =========================
 @st.cache_resource
 def load_models():
-    m_izq = load("modelo_letras_izq_rf.joblib")["model"]
-    m_der = load("modelo_letras_der_rf.joblib")["model"]
+    try:
+        m_izq = load("modelo_letras_izq_rf.joblib")["model"]
+        m_der = load("modelo_letras_der_rf.joblib")["model"]
+    except Exception as e:
+        st.error(f"No pude cargar los modelos .joblib: {e}")
+        st.stop()
     return m_izq, m_der
 
 MODEL_IZQ, MODEL_DER = load_models()
 
-# ---- Normalización ----
+# =========================
+# Normalización de landmarks
+# =========================
 def normalize_seq_xy(seq_xyz):
+    """
+    seq_xyz: np.array (21,3) con (x,y,z) de MediaPipe.
+    Centra y escala XY a [-1,1] aprox. Z se deja relativa.
+    """
     seq = seq_xyz.copy().astype(float)
     xy = seq[:, :2]
     xy -= xy.mean(axis=0, keepdims=True)
-    max_abs = np.abs(xy).max() or 1.0
+    max_abs = float(np.abs(xy).max()) or 1.0
     xy /= max_abs
     seq[:, :2] = xy
     return seq
 
-# ---- Sidebar ----
+# =========================
+# Sidebar
+# =========================
 with st.sidebar:
     st.header("Ajustes")
     modo = st.radio("Elegí tu mano", ["Diestro", "Zurdo"], index=0)
     corregir_espejo = st.checkbox("Corregir espejo de cámara", value=True)
-    st.caption("Si tu cámara se ve como selfie, dejá activado 'Corregir espejo'.")
+    st.caption("Si tu cámara se ve como 'selfie', dejá habilitado el espejo.")
 
-# ---- WebRTC (stun público) ----
-rtc_cfg = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+# =========================
+# Config WebRTC (STUN + TURN)
+# Lee TURN desde env vars de Render y usa OpenRelay por defecto
+# =========================
+TURN_URL = os.getenv("TURN_URL", "turn:openrelay.metered.ca:80")
+TURN_USERNAME = os.getenv("TURN_USERNAME", "openrelayproject")
+TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL", "openrelayproject")
 
+ice_servers = [
+    {"urls": [
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302",
+        "stun:stun2.l.google.com:19302",
+        "stun:stun3.l.google.com:19302",
+        "stun:stun4.l.google.com:19302",
+    ]},
+    {
+        "urls": [TURN_URL],
+        "username": TURN_USERNAME,
+        "credential": TURN_CREDENTIAL,
+    },
+]
+rtc_cfg = RTCConfiguration({"iceServers": ice_servers})
+
+with st.sidebar:
+    st.subheader("Conectividad WebRTC")
+    st.write("TURN:", TURN_URL)
+
+st.info(
+    "Dale permiso a la cámara. Procesamos cada cuadro con MediaPipe + tu modelo "
+    "y mostramos la predicción suavizada (ventana de 5 frames)."
+)
+
+# =========================
+# Video Transformer
+# =========================
 class HandSignTransformer(VideoTransformerBase):
     def __init__(self):
         self.hands = mp.solutions.hands.Hands(
@@ -45,16 +94,20 @@ class HandSignTransformer(VideoTransformerBase):
             model_complexity=1,
             max_num_hands=1,
             min_detection_confidence=0.8,
-            min_tracking_confidence=0.8
+            min_tracking_confidence=0.8,
         )
         self.last_preds = deque(maxlen=5)
         self.current_pred = "…"
 
     def transform(self, frame):
+        # Frame a ndarray BGR
         img = frame.to_ndarray(format="bgr24")
+
+        # Corregir espejo si está activado
         if corregir_espejo:
             img = cv2.flip(img, 1)
 
+        # MediaPipe
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         result = self.hands.process(rgb)
 
@@ -74,23 +127,49 @@ class HandSignTransformer(VideoTransformerBase):
             self.current_pred = str(vote)
 
             mp.solutions.drawing_utils.draw_landmarks(
-                img, lms, mp.solutions.hands.HAND_CONNECTIONS,
+                img,
+                lms,
+                mp.solutions.hands.HAND_CONNECTIONS,
                 mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
-                mp.solutions.drawing_styles.get_default_hand_connections_style()
+                mp.solutions.drawing_styles.get_default_hand_connections_style(),
             )
         else:
             self.last_preds.clear()
             self.current_pred = "…"
 
-        cv2.rectangle(img, (10, 10), (360, 70), (0, 0, 0), -1)
-        cv2.putText(img, f"Predicción: {self.current_pred}", (20, 55),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+        # Overlay con predicción
+        cv2.rectangle(img, (10, 10), (420, 70), (0, 0, 0), -1)
+        cv2.putText(
+            img,
+            f"Predicción: {self.current_pred}",
+            (20, 55),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (255, 255, 255),
+            2,
+        )
         return img
 
-st.info("Dale permiso a la cámara. La predicción aparece sobre el video (5 frames suavizados).")
-webrtc_streamer(
+# =========================
+# Lanzar WebRTC
+# =========================
+webrtc_ctx = webrtc_streamer(
     key="signia-rtc",
     video_transformer_factory=HandSignTransformer,
-    media_stream_constraints={"video": True, "audio": False},
     rtc_configuration=rtc_cfg,
+    media_stream_constraints={
+        "video": {
+            "facingMode": "user",
+            "width": {"ideal": 1280},
+            "height": {"ideal": 720},
+        },
+        "audio": False,
+    },
+    async_transform=True,
+    video_html_attrs={"playsinline": True, "autoPlay": True, "muted": True, "controls": False},
 )
+
+# Mostrar estado en la UI (útil para debug)
+if webrtc_ctx is not None:
+    with st.sidebar:
+        st.write("Estado:", "playing ✅" if webrtc_ctx.state.playing else "stopped ⛔")

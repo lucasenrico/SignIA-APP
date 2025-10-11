@@ -1,4 +1,5 @@
-import os
+# app_streamlit.py
+import os, time
 import streamlit as st
 from joblib import load
 import numpy as np
@@ -11,6 +12,15 @@ from streamlit_webrtc import (
     RTCConfiguration,
     WebRtcMode,
 )
+
+# --- marcador para saber si el deploy se actualiza ---
+try:
+    import streamlit_webrtc as _sw
+    SWV = _sw.__version__
+except Exception:
+    SWV = "unknown"
+BUILD_TAG = os.getenv("RENDER_GIT_COMMIT", "sin_sha")[:7]
+st.caption(f"🧱 Build: {BUILD_TAG} | webrtc {SWV} | {time.strftime('%H:%M:%S')}")
 
 st.set_page_config(page_title="SIGNIA - LSA en tiempo real", layout="wide")
 st.title("SIGNIA – Reconocimiento de señas (tiempo real)")
@@ -30,10 +40,6 @@ MODEL_IZQ, MODEL_DER = load_models()
 # Normalización de landmarks
 # =========================
 def normalize_seq_xy(seq_xyz):
-    """
-    seq_xyz: np.array (21,3) con (x,y,z) de MediaPipe.
-    Centra y escala XY a [-1,1] aprox. Z se deja relativa.
-    """
     seq = seq_xyz.copy().astype(float)
     xy = seq[:, :2]
     xy -= xy.mean(axis=0, keepdims=True)
@@ -53,12 +59,14 @@ with st.sidebar:
 
 # =========================
 # Config WebRTC (STUN + TURN)
-# Lee TURN desde env vars de Render y usa OpenRelay por defecto
 # =========================
+# lee TURN desde variables de entorno (Render → Environment),
+# con fallback gratuito de OpenRelay (para demos)
 TURN_URL = os.getenv("TURN_URL", "turn:openrelay.metered.ca:80")
 TURN_USERNAME = os.getenv("TURN_USERNAME", "openrelayproject")
 TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL", "openrelayproject")
 
+# usamos varios STUN, y TURN en 80 y 443 + variantes tcp/tls
 ice_servers = [
     {"urls": [
         "stun:stun.l.google.com:19302",
@@ -67,11 +75,9 @@ ice_servers = [
         "stun:stun3.l.google.com:19302",
         "stun:stun4.l.google.com:19302",
     ]},
-    {
-        "urls": [TURN_URL],
-        "username": TURN_USERNAME,
-        "credential": TURN_CREDENTIAL,
-    },
+    {"urls": [f"{TURN_URL}?transport=udp"], "username": TURN_USERNAME, "credential": TURN_CREDENTIAL},
+    {"urls": ["turn:openrelay.metered.ca:443?transport=tcp"], "username": "openrelayproject", "credential": "openrelayproject"},
+    {"urls": ["turns:openrelay.metered.ca:443?transport=tcp"], "username": "openrelayproject", "credential": "openrelayproject"},
 ]
 rtc_cfg = RTCConfiguration({"iceServers": ice_servers})
 
@@ -79,15 +85,23 @@ with st.sidebar:
     st.subheader("Conectividad WebRTC")
     st.write("TURN:", TURN_URL)
 
-st.info(
-    "Dale permiso a la cámara. Procesamos cada cuadro con MediaPipe + tu modelo "
-    "y mostramos la predicción suavizada (ventana de 5 frames)."
-)
+st.info("Permití la cámara. Si queda en *connecting…*, probá otra red o hotspot. Con TURN debería conectar en la mayoría de redes.")
 
 # =========================
-# Procesador de video (nueva API)
+# Procesadores de video
 # =========================
+class PassthroughProcessor(VideoProcessorBase):
+    """Modo diagnóstico: solo muestra la cámara (sin Mediapipe ni modelo)."""
+    def recv(self, frame):
+        import av
+        img = frame.to_ndarray(format="bgr24")
+        # espejo opcional
+        if corregir_espejo:
+            img = cv2.flip(img, 1)
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
 class HandSignProcessor(VideoProcessorBase):
+    """Modo producción: Mediapipe + modelo."""
     def __init__(self):
         self.hands = mp.solutions.hands.Hands(
             static_image_mode=False,
@@ -100,40 +114,25 @@ class HandSignProcessor(VideoProcessorBase):
         self.current_pred = "…"
 
     def recv(self, frame):
-        """
-        Nueva API: recibimos av.VideoFrame, devolvemos av.VideoFrame.
-        """
-        import av  # import local para tiempos de carga
-
+        import av
         img = frame.to_ndarray(format="bgr24")
-
-        # Corregir espejo si está activado
         if corregir_espejo:
             img = cv2.flip(img, 1)
 
-        # MediaPipe
         rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         result = self.hands.process(rgb)
 
         if result.multi_hand_landmarks:
             lms = result.multi_hand_landmarks[0]
             pts = np.array([[lm.x, lm.y, lm.z] for lm in lms.landmark], dtype=float)
-            seq = normalize_seq_xy(pts)
-            vec = seq.reshape(-1)
-
-            if modo == "Zurdo":
-                pred = MODEL_IZQ.predict([vec])[0]
-            else:
-                pred = MODEL_DER.predict([vec])[0]
-
+            vec = normalize_seq_xy(pts).reshape(-1)
+            pred = (MODEL_IZQ if modo == "Zurdo" else MODEL_DER).predict([vec])[0]
             self.last_preds.append(pred)
             vote = Counter(self.last_preds).most_common(1)[0][0]
             self.current_pred = str(vote)
 
             mp.solutions.drawing_utils.draw_landmarks(
-                img,
-                lms,
-                mp.solutions.hands.HAND_CONNECTIONS,
+                img, lms, mp.solutions.hands.HAND_CONNECTIONS,
                 mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
                 mp.solutions.drawing_styles.get_default_hand_connections_style(),
             )
@@ -141,23 +140,26 @@ class HandSignProcessor(VideoProcessorBase):
             self.last_preds.clear()
             self.current_pred = "…"
 
-        # Overlay con predicción
         cv2.rectangle(img, (10, 10), (420, 70), (0, 0, 0), -1)
-        cv2.putText(
-            img,
-            f"Predicción: {self.current_pred}",
-            (20, 55),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            (255, 255, 255),
-            2,
-        )
-
-        # Devolver como av.VideoFrame
+        cv2.putText(img, f"Predicción: {self.current_pred}", (20, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255,255,255), 2)
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 # =========================
-# Lanzar WebRTC (nueva API)
+# Elegir modo: diagnóstico o producción
+# Agregamos ?diag=1 en la URL para diagnóstico
+# =========================
+params = st.query_params
+diag_mode = params.get("diag", ["0"])[0] in ("1", "true", "True")
+
+with st.sidebar:
+    st.checkbox("Modo diagnóstico (solo cámara)", value=diag_mode, disabled=True)
+    st.caption("Para activarlo, abrí la URL como: ?diag=1")
+
+video_factory = PassthroughProcessor if diag_mode else HandSignProcessor
+
+# =========================
+# Lanzar WebRTC (API nueva)
 # =========================
 webrtc_ctx = webrtc_streamer(
     key="signia-rtc",
@@ -167,15 +169,12 @@ webrtc_ctx = webrtc_streamer(
         "video": {"facingMode": "user", "width": {"ideal": 1280}, "height": {"ideal": 720}},
         "audio": False,
     },
-    video_processor_factory=HandSignProcessor,  # <-- nueva API
-    async_processing=True,                      # evita bloqueos si el procesamiento tarda
+    video_processor_factory=video_factory,
+    async_processing=True,
     video_html_attrs={"playsinline": True, "autoPlay": True, "muted": True, "controls": False},
 )
 
-# Estado en la UI (útil para debug)
+# Estados útiles en UI
 if webrtc_ctx is not None:
     with st.sidebar:
         st.write("Estado:", "playing ✅" if webrtc_ctx.state.playing else "stopped ⛔")
-
-
-

@@ -1,14 +1,15 @@
 import streamlit as st
 from joblib import load
 import numpy as np
-import mediapipe as mp
 import cv2
-from collections import Counter
+import mediapipe as mp
+from collections import deque, Counter
+from streamlit_webrtc import webrtc_streamer, VideoTransformerBase, RTCConfiguration
 
 st.set_page_config(page_title="SIGNIA - LSA en tiempo real", layout="wide")
-st.title("SIGNIA – Reconocimiento de señas (demo web)")
+st.title("SIGNIA – Reconocimiento de señas (tiempo real)")
 
-# ---- Cargar modelos ----
+# ---- Modelos ----
 @st.cache_resource
 def load_models():
     m_izq = load("modelo_letras_izq_rf.joblib")["model"]
@@ -31,28 +32,35 @@ def normalize_seq_xy(seq_xyz):
 with st.sidebar:
     st.header("Ajustes")
     modo = st.radio("Elegí tu mano", ["Diestro", "Zurdo"], index=0)
+    corregir_espejo = st.checkbox("Corregir espejo de cámara", value=True)
+    st.caption("Si tu cámara se ve como selfie, dejá activado 'Corregir espejo'.")
 
-st.info("📷 Usa la cámara para capturar una imagen y obtener la predicción.")
+# ---- WebRTC (stun público) ----
+rtc_cfg = RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
 
-# ---- Cámara ----
-img_file = st.camera_input("Sacá una foto de tu seña")
+class HandSignTransformer(VideoTransformerBase):
+    def __init__(self):
+        self.hands = mp.solutions.hands.Hands(
+            static_image_mode=False,
+            model_complexity=1,
+            max_num_hands=1,
+            min_detection_confidence=0.8,
+            min_tracking_confidence=0.8
+        )
+        self.last_preds = deque(maxlen=5)
+        self.current_pred = "…"
 
-if img_file is not None:
-    # Leer la imagen como array
-    bytes_data = img_file.getvalue()
-    nparr = np.frombuffer(bytes_data, np.uint8)
-    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    def transform(self, frame):
+        img = frame.to_ndarray(format="bgr24")
+        if corregir_espejo:
+            img = cv2.flip(img, 1)
 
-    # Procesar con mediapipe
-    with mp.solutions.hands.Hands(
-        static_image_mode=True,
-        max_num_hands=1,
-        min_detection_confidence=0.8
-    ) as hands:
-        result = hands.process(rgb)
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        result = self.hands.process(rgb)
+
         if result.multi_hand_landmarks:
-            pts = np.array([[lm.x, lm.y, lm.z] for lm in result.multi_hand_landmarks[0].landmark], dtype=float)
+            lms = result.multi_hand_landmarks[0]
+            pts = np.array([[lm.x, lm.y, lm.z] for lm in lms.landmark], dtype=float)
             seq = normalize_seq_xy(pts)
             vec = seq.reshape(-1)
 
@@ -61,6 +69,28 @@ if img_file is not None:
             else:
                 pred = MODEL_DER.predict([vec])[0]
 
-            st.success(f"✅ Predicción: **{pred}**")
+            self.last_preds.append(pred)
+            vote = Counter(self.last_preds).most_common(1)[0][0]
+            self.current_pred = str(vote)
+
+            mp.solutions.drawing_utils.draw_landmarks(
+                img, lms, mp.solutions.hands.HAND_CONNECTIONS,
+                mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
+                mp.solutions.drawing_styles.get_default_hand_connections_style()
+            )
         else:
-            st.error("❌ No se detectó mano en la imagen.")
+            self.last_preds.clear()
+            self.current_pred = "…"
+
+        cv2.rectangle(img, (10, 10), (360, 70), (0, 0, 0), -1)
+        cv2.putText(img, f"Predicción: {self.current_pred}", (20, 55),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+        return img
+
+st.info("Dale permiso a la cámara. La predicción aparece sobre el video (5 frames suavizados).")
+webrtc_streamer(
+    key="signia-rtc",
+    video_transformer_factory=HandSignTransformer,
+    media_stream_constraints={"video": True, "audio": False},
+    rtc_configuration=rtc_cfg,
+)

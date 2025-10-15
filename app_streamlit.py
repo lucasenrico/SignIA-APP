@@ -3,6 +3,7 @@ import os
 import base64
 import pathlib
 from collections import Counter, deque
+import gc
 
 import numpy as np
 import cv2
@@ -19,13 +20,20 @@ st.set_page_config(
     layout="wide"
 )
 
-# Forzar preview de cámara NO ESPEJO en st.camera_input (solo la vista previa)
+# FORZAR MODO SELFIE (preview espejada)
+# - LITE: st.camera_input
+# - LIVE: streamlit-webrtc <video>
 st.markdown("""
 <style>
-/* Vista previa de cámara en el widget de Streamlit (LITE) */
+/* LITE: espejar preview de cámara */
 [data-testid="stCameraInput"] video,
 [data-testid="stCameraInput"] canvas {
-    transform: none !important;   /* sin espejo */
+    transform: scaleX(-1) !important;
+}
+/* LIVE: espejar video */
+.st-webrtc video, video#streamlit-webrtc-video,
+video[playsinline][autoplay] {
+    transform: scaleX(-1) !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -34,7 +42,7 @@ LIVE_MODE = os.getenv("LIVE_MODE", "0") in ("1", "true", "True")
 BUILD_TAG = os.getenv("RENDER_GIT_COMMIT", "local")[:7]
 
 ASSET_LOGO = "assets/logo.png"
-tutorial = "docs/tutorial.pdf"
+TUTORIAL_PDF = "docs/tutorial.pdf"
 
 TURN_URL = os.getenv("TURN_URL", "turn:openrelay.metered.ca:80")
 TURN_USERNAME = os.getenv("TURN_USERNAME", "openrelayproject")
@@ -93,12 +101,29 @@ def load_models():
 
 MODEL_IZQ, MODEL_DER = load_models()
 
-def predict_letter(vec: np.ndarray, mano: str) -> str:
-    """Predice letra según mano elegida. Devuelve '¿?' si no hay modelo."""
-    model = MODEL_IZQ if mano == "Zurdo" else MODEL_DER
+def predict_with_model(vec: np.ndarray, mano_sel: str) -> str:
+    """Predice con el modelo elegido manualmente (Diestro/Zurdo)."""
+    model = MODEL_IZQ if mano_sel == "Zurdo" else MODEL_DER
     if model is None:
         return "¿?"
     return model.predict([vec])[0]
+
+def swap_lr(label: str) -> str:
+    """Invierte etiqueta Left/Right (útil cuando espejamos)."""
+    if label == "Left":
+        return "Right"
+    if label == "Right":
+        return "Left"
+    return label
+
+def free_vars(*vars_):
+    """Libera memoria de arrays grandes para Render Free."""
+    for v in vars_:
+        try:
+            del v
+        except Exception:
+            pass
+    gc.collect()
 
 # =========================
 # SIDEBAR
@@ -107,7 +132,8 @@ with st.sidebar:
     if file_exists(ASSET_LOGO):
         st.image(ASSET_LOGO, use_container_width=True)
     st.header("Ajustes")
-    mano = st.radio("Elegí tu mano:", ["Diestro", "Zurdo"], index=0)
+    mano = st.radio("Elegí tu mano (para el modelo):", ["Diestro", "Zurdo"], index=0)
+    auto_hand = st.toggle("Detectar mano automáticamente (ajustada a selfie)", False)
     st.write("Modo:")
     if LIVE_MODE:
         st.success("LIVE (cámara en tiempo real)")
@@ -137,18 +163,18 @@ tab_demo, tab_tutorial = st.tabs(["🎥 Demo", "📘 Tutorial"])
 with tab_tutorial:
     st.subheader("Cómo usar SIGNIA")
     st.write(
-        "‼ Recomendaciones: fondo claro, una sola mano que se vea completa y bien iluminada.\n"
-        "1- Elegí tu mano (diestro/zurdo) para calibrar el modelo.\n"
-        "2- Tomá la foto, o subí una desde tus archivos. ¡Listo!"
+        "Dataset y procesamiento en **modo selfie** (espejado) para que la vista previa coincida con lo que se procesa.\n"
+        "1) Elegí tu mano (o activá la detección auto ajustada a selfie).\n"
+        "2) Tomá la foto o subí una imagen. ¡Listo!"
     )
-    show_pdf(tutorial, height=820)
+    show_pdf(TUTORIAL_PDF, height=820)
 
-    if file_exists(tutorial):
-        with open(tutorial, "rb") as f:
+    if file_exists(TUTORIAL_PDF):
+        with open(TUTORIAL_PDF, "rb") as f:
             st.download_button(
                 "⬇️ Descargar tutorial (PDF)",
                 data=f,
-                file_name="tutorial.pdf",
+                file_name="SIGNIA_Tutorial.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
@@ -159,11 +185,11 @@ with tab_tutorial:
 with tab_demo:
     st.caption("Elegí modo LIVE/LITE por variable de entorno LIVE_MODE (1/0).")
 
-    # -------- LITE (sin WebRTC): camera_input / upload --------
+    # -------- LITE (sin WebRTC) --------
     if not LIVE_MODE:
         col1, col2 = st.columns(2)
         with col1:
-            img_cam = st.camera_input("Tomá una foto de tu seña (una sola mano)")
+            img_cam = st.camera_input("Tomá una foto de tu seña (modo selfie)")
         with col2:
             img_up = st.file_uploader("…o subí una imagen", type=["jpg", "jpeg", "png"])
 
@@ -184,9 +210,19 @@ with tab_demo:
         bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if bgr is None:
             st.error("No se pudo leer la imagen.")
+            free_vars(img_bytes, nparr, bgr)
             st.stop()
 
-        # Procesar SIN espejo (coherencia L/R) y SIN mostrar imagen
+        # ===== CLAVE: ESPEJAR PARA QUE COINCIDA CON LA PREVIEW (modo selfie) =====
+        bgr = cv2.flip(bgr, 1)
+
+        # Opcional: limitar ancho para ahorrar recursos
+        max_w = 960
+        if bgr.shape[1] > max_w:
+            scale = max_w / bgr.shape[1]
+            bgr = cv2.resize(bgr, (int(bgr.shape[1]*scale), int(bgr.shape[0]*scale)),
+                             interpolation=cv2.INTER_AREA)
+
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
         with mp.solutions.hands.Hands(
@@ -196,22 +232,30 @@ with tab_demo:
 
         if not res.multi_hand_landmarks:
             st.error("No se detectó mano. Probá otra toma (fondo claro, mano completa).")
+            free_vars(img_bytes, nparr, bgr, rgb, res)
             st.stop()
 
-        # Extraer landmarks
         lms = res.multi_hand_landmarks[0]
         pts = np.array([[lm.x, lm.y, lm.z] for lm in lms.landmark], dtype=float)
         vec = normalize_seq_xy(pts).reshape(-1)
-        pred = predict_letter(vec, mano)
 
-        # (Opcional) podrías dibujar en 'rgb' pero NO mostramos imagen.
-        # mp.solutions.drawing_utils.draw_landmarks(...)
+        # Auto-hand ajustado a selfie: MediaPipe devuelve L/R del frame espejado -> invertimos
+        mano_base = mano
+        if auto_hand and res.multi_handedness:
+            label = res.multi_handedness[0].classification[0].label  # 'Left' o 'Right'
+            label_corr = swap_lr(label)  # corregir por selfie
+            mano_base = "Zurdo" if label_corr == "Left" else "Diestro"
 
-        # Mostrar SOLO la predicción (sin imágenes)
-        st.success(f"✅ Predicción: **{pred}**")
+        pred = predict_with_model(vec, mano_base)
+
+        # SOLO la predicción (no mostramos imágenes para ahorrar recursos)
+        st.success(f"✅ Predicción: **{pred}** · Mano usada: **{mano_base}**")
+
+        # Limpieza de memoria
+        free_vars(img_bytes, nparr, bgr, rgb, res, lms, pts, vec)
         st.stop()
 
-    # -------- LIVE (WebRTC): streaming en tiempo real --------
+    # -------- LIVE (WebRTC) --------
     else:
         try:
             from streamlit_webrtc import (
@@ -235,32 +279,43 @@ with tab_demo:
         class LiveProcessor(VideoProcessorBase):
             def __init__(self):
                 self.hands = mp.solutions.hands.Hands(
-                    static_image_mode=False, model_complexity=0,  # liviano
+                    static_image_mode=False, model_complexity=0,
                     max_num_hands=1, min_detection_confidence=0.8, min_tracking_confidence=0.8
                 )
                 self.buf = deque(maxlen=5)
                 self.pred = "…"
                 self._f = 0
+                self.mano_usada = "?"
 
             def recv(self, frame):
                 import av
                 img = frame.to_ndarray(format="bgr24")
-                # SIN espejo: mostramos la cámara tal cual llega
+
+                # ===== CLAVE: ESPEJAR PARA QUE COINCIDA CON LA PREVIEW (modo selfie) =====
+                img = cv2.flip(img, 1)
 
                 self._f += 1
                 small = cv2.resize(img, (TARGET_W, TARGET_H), interpolation=cv2.INTER_AREA)
 
                 if self._f % SKIP_N == 0:
-                    # Procesar tal cual (sin flips)
                     rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
                     r = self.hands.process(rgb)
                     if r.multi_hand_landmarks:
                         lms = r.multi_hand_landmarks[0]
                         pts = np.array([[lm.x, lm.y, lm.z] for lm in lms.landmark], dtype=float)
                         vec = normalize_seq_xy(pts).reshape(-1)
-                        p = predict_letter(vec, mano)
+
+                        # Auto-hand ajustado a selfie
+                        mano_base = mano
+                        if auto_hand and r.multi_handedness:
+                            label = r.multi_handedness[0].classification[0].label
+                            label_corr = swap_lr(label)  # corregimos por selfie
+                            mano_base = "Zurdo" if label_corr == "Left" else "Diestro"
+
+                        p = predict_with_model(vec, mano_base)
                         self.buf.append(p)
                         self.pred = Counter(self.buf).most_common(1)[0][0]
+                        self.mano_usada = mano_base
 
                         mp.solutions.drawing_utils.draw_landmarks(
                             small, lms, mp.solutions.hands.HAND_CONNECTIONS,
@@ -270,9 +325,11 @@ with tab_demo:
                     else:
                         self.buf.clear()
                         self.pred = "…"
+                        self.mano_usada = "?"
 
-                cv2.rectangle(small, (10, 10), (520, 70), (0, 0, 0), -1)
-                cv2.putText(small, f"Predicción: {self.pred}", (20, 55),
+                cv2.rectangle(small, (10, 10), (720, 70), (0, 0, 0), -1)
+                txt = f"Predicción: {self.pred} · Mano: {self.mano_usada}"
+                cv2.putText(small, txt, (20, 55),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
                 return av.VideoFrame.from_ndarray(small, format="bgr24")
 

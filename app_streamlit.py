@@ -35,6 +35,15 @@ with st.sidebar:
 st.info("📷 Usa la cámara para capturar una imagen y obtener la predicción.")
 
 # ---- Cámara ----
+st.markdown("""
+<style>
+/* Fuerza al preview del componente de cámara a NO espejarse */
+[data-testid="stCameraInput"] video {
+  transform: scaleX(1) !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 img_file = st.camera_input("Sacá una foto de tu seña")
 
 if img_file is not None:
@@ -42,9 +51,6 @@ if img_file is not None:
     bytes_data = img_file.getvalue()
     nparr = np.frombuffer(bytes_data, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-
-    # 💡 invertir para corregir el espejo de st.camera_input
-    frame = cv2.flip(frame, 1)
 
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 

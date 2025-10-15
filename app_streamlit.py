@@ -47,13 +47,11 @@ TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL", "openrelayproject")
 SKIP_N = int(os.getenv("SKIP_N", "3"))
 TARGET_W, TARGET_H = 640, 480
 
-
 # =========================
 # UTILS
 # =========================
 def file_exists(path: str) -> bool:
     return pathlib.Path(path).exists()
-
 
 def show_pdf(path: str, height: int = 800):
     """Muestra el PDF embebido dentro de la app."""
@@ -68,7 +66,6 @@ def show_pdf(path: str, height: int = 800):
     """
     st.components.v1.html(pdf_iframe, height=height + 20)
 
-
 def normalize_seq_xy(seq_xyz: np.ndarray) -> np.ndarray:
     seq = seq_xyz.copy().astype(float)
     xy = seq[:, :2]
@@ -77,7 +74,6 @@ def normalize_seq_xy(seq_xyz: np.ndarray) -> np.ndarray:
     xy /= max_abs
     seq[:, :2] = xy
     return seq
-
 
 @st.cache_resource
 def load_models():
@@ -93,9 +89,7 @@ def load_models():
         st.warning("No se pudo cargar modelo derecho.")
     return m_izq, m_der
 
-
 MODEL_IZQ, MODEL_DER = load_models()
-
 
 def predict_with_model(vec: np.ndarray, mano_sel: str) -> str:
     """Predice según la mano seleccionada."""
@@ -103,7 +97,6 @@ def predict_with_model(vec: np.ndarray, mano_sel: str) -> str:
     if model is None:
         return "¿?"
     return model.predict([vec])[0]
-
 
 def free_vars(*vars_):
     """Libera memoria (útil en Render Free)."""
@@ -114,7 +107,6 @@ def free_vars(*vars_):
             pass
     gc.collect()
 
-
 # =========================
 # SIDEBAR
 # =========================
@@ -123,17 +115,14 @@ with st.sidebar:
         st.image(ASSET_LOGO, use_container_width=True)
     st.header("Ajustes")
     mano = st.radio("Elegí tu mano:", ["Diestro", "Zurdo"], index=0)
-    st.write("Modo:")
+    #st.write("Modo:")
     if LIVE_MODE:
         st.success("LIVE (cámara en tiempo real)")
-        #st.caption("Uso recomendado: local o Hugging Face Spaces.")
-    #else:
-        #st.info("LITE (sin streaming)")
-        #st.caption("Uso recomendado: Render Free.")
-    st.divider()
-    st.caption(f"🧱 Build: {BUILD_TAG} · Live: {LIVE_MODE}")
-    st.caption("SIGNIA · MediaPipe + RandomForest")
-
+    else:
+        st.info("LITE (sin streaming)")
+    #st.divider()
+    #st.caption(f"🧱 Build: {BUILD_TAG} · Live: {LIVE_MODE}")
+    #st.caption("SIGNIA · MediaPipe + RandomForest")
 
 # =========================
 # HEADER CON LOGO + TABS
@@ -147,18 +136,17 @@ with col_title:
 
 tab_demo, tab_tutorial = st.tabs(["🎥 Demo", "📘 Tutorial"])
 
-
 # =========================
 # TAB: TUTORIAL
 # =========================
 with tab_tutorial:
     st.subheader("Cómo usar SIGNIA")
-    st.write( "‼ Recomendaciones: fondo claro, una sola mano que se vea completa y bien iluminada.\n"
-             "1- Elegí tu mano (diestro/zurdo) para calibrar el modelo.\n"
-             "2- Tomá la foto, o subí una desde tus archivos. ¡Y listo!" )
-    if file_exists(tutorial):
-        show_pdf(tutorial, height=820)
-        with open(tutorial, "rb") as f:
+    st.write("""‼ Recomendaciones: fondo claro, una sola mano que se vea completa y bien iluminada.
+1- Elegí tu mano (diestro/zurdo) para calibrar el modelo.
+2- Tomá la foto, o subí una desde tus archivos. ¡Y listo!""")
+    if file_exists(TUTORIAL_PDF):
+        show_pdf(TUTORIAL_PDF, height=820)
+        with open(TUTORIAL_PDF, "rb") as f:
             st.download_button(
                 "⬇️ Descargar tutorial completo de como usar SIGNIA (PDF)",
                 data=f,
@@ -169,13 +157,10 @@ with tab_tutorial:
     else:
         st.info("📘 El tutorial no está disponible por el momento.")
 
-
 # =========================
 # TAB: DEMO (LIVE o LITE)
 # =========================
 with tab_demo:
-    #st.caption("Elegí modo LIVE/LITE por variable de entorno LIVE_MODE (1/0).")
-
     # -------- LITE (sin WebRTC) --------
     if not LIVE_MODE:
         col1, col2 = st.columns(2)
@@ -204,7 +189,7 @@ with tab_demo:
             free_vars(img_bytes, nparr, bgr)
             st.stop()
 
-        # Espejar para que coincida con la preview
+        # Espejar para que coincida con la preview (modo selfie coherente)
         bgr = cv2.flip(bgr, 1)
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 

@@ -16,21 +16,17 @@ import mediapipe as mp
 # =========================
 st.set_page_config(
     page_title="SIGNIA",
-    page_icon="assets/logo.png",   # favicon
+    page_icon="assets/logo.png",
     layout="wide"
 )
 
-# FORZAR MODO SELFIE (preview espejada)
-# - LITE: st.camera_input
-# - LIVE: streamlit-webrtc <video>
+# Vista previa tipo "selfie" (espejada) — se verá igual al procesar
 st.markdown("""
 <style>
-/* LITE: espejar preview de cámara */
 [data-testid="stCameraInput"] video,
 [data-testid="stCameraInput"] canvas {
     transform: scaleX(-1) !important;
 }
-/* LIVE: espejar video */
 .st-webrtc video, video#streamlit-webrtc-video,
 video[playsinline][autoplay] {
     transform: scaleX(-1) !important;
@@ -51,20 +47,16 @@ TURN_CREDENTIAL = os.getenv("TURN_CREDENTIAL", "openrelayproject")
 SKIP_N = int(os.getenv("SKIP_N", "3"))
 TARGET_W, TARGET_H = 640, 480
 
+
 # =========================
 # UTILS
 # =========================
 def file_exists(path: str) -> bool:
-    try:
-        return pathlib.Path(path).exists()
-    except Exception:
-        return False
+    return pathlib.Path(path).exists()
+
 
 def show_pdf(path: str, height: int = 800):
-    """Embed un PDF dentro de la app (sin hosting extra)."""
-    if not file_exists(path):
-        st.warning("No se encontró el archivo del tutorial. Asegurate de subir `docs/tutorial.pdf`.")
-        return
+    """Muestra el PDF embebido dentro de la app."""
     with open(path, "rb") as f:
         base64_pdf = base64.b64encode(f.read()).decode("utf-8")
     pdf_iframe = f"""
@@ -76,6 +68,7 @@ def show_pdf(path: str, height: int = 800):
     """
     st.components.v1.html(pdf_iframe, height=height + 20)
 
+
 def normalize_seq_xy(seq_xyz: np.ndarray) -> np.ndarray:
     seq = seq_xyz.copy().astype(float)
     xy = seq[:, :2]
@@ -85,45 +78,42 @@ def normalize_seq_xy(seq_xyz: np.ndarray) -> np.ndarray:
     seq[:, :2] = xy
     return seq
 
+
 @st.cache_resource
 def load_models():
-    """Carga segura de modelos (maneja ausencia de archivos)."""
+    """Carga segura de modelos."""
     m_izq = m_der = None
     try:
         m_izq = load("modelo_letras_izq_rf.joblib")["model"]
-    except Exception as e:
-        st.warning(f"No se pudo cargar modelo izquierdo: {e}")
+    except Exception:
+        st.warning("No se pudo cargar modelo izquierdo.")
     try:
         m_der = load("modelo_letras_der_rf.joblib")["model"]
-    except Exception as e:
-        st.warning(f"No se pudo cargar modelo derecho: {e}")
+    except Exception:
+        st.warning("No se pudo cargar modelo derecho.")
     return m_izq, m_der
+
 
 MODEL_IZQ, MODEL_DER = load_models()
 
+
 def predict_with_model(vec: np.ndarray, mano_sel: str) -> str:
-    """Predice con el modelo elegido manualmente (Diestro/Zurdo)."""
+    """Predice según la mano seleccionada."""
     model = MODEL_IZQ if mano_sel == "Zurdo" else MODEL_DER
     if model is None:
         return "¿?"
     return model.predict([vec])[0]
 
-def swap_lr(label: str) -> str:
-    """Invierte etiqueta Left/Right (útil cuando espejamos)."""
-    if label == "Left":
-        return "Right"
-    if label == "Right":
-        return "Left"
-    return label
 
 def free_vars(*vars_):
-    """Libera memoria de arrays grandes para Render Free."""
+    """Libera memoria (útil en Render Free)."""
     for v in vars_:
         try:
             del v
         except Exception:
             pass
     gc.collect()
+
 
 # =========================
 # SIDEBAR
@@ -132,18 +122,18 @@ with st.sidebar:
     if file_exists(ASSET_LOGO):
         st.image(ASSET_LOGO, use_container_width=True)
     st.header("Ajustes")
-    mano = st.radio("Elegí tu mano (para el modelo):", ["Diestro", "Zurdo"], index=0)
-    auto_hand = st.toggle("Detectar mano automáticamente (ajustada a selfie)", False)
+    mano = st.radio("Elegí tu mano:", ["Diestro", "Zurdo"], index=0)
     st.write("Modo:")
     if LIVE_MODE:
         st.success("LIVE (cámara en tiempo real)")
-        st.caption("Uso recomendado: local / Hugging Face Spaces.")
-    else:
-        st.info("LITE (sin streaming)")
-        st.caption("Uso recomendado: Render Free.")
+        #st.caption("Uso recomendado: local o Hugging Face Spaces.")
+    #else:
+        #st.info("LITE (sin streaming)")
+        #st.caption("Uso recomendado: Render Free.")
     st.divider()
     st.caption(f"🧱 Build: {BUILD_TAG} · Live: {LIVE_MODE}")
     st.caption("SIGNIA · MediaPipe + RandomForest")
+
 
 # =========================
 # HEADER CON LOGO + TABS
@@ -157,39 +147,40 @@ with col_title:
 
 tab_demo, tab_tutorial = st.tabs(["🎥 Demo", "📘 Tutorial"])
 
+
 # =========================
 # TAB: TUTORIAL
 # =========================
 with tab_tutorial:
     st.subheader("Cómo usar SIGNIA")
-    st.write(
-        "Dataset y procesamiento en **modo selfie** (espejado) para que la vista previa coincida con lo que se procesa.\n"
-        "1) Elegí tu mano (o activá la detección auto ajustada a selfie).\n"
-        "2) Tomá la foto o subí una imagen. ¡Listo!"
-    )
-    show_pdf(TUTORIAL_PDF, height=820)
-
-    if file_exists(TUTORIAL_PDF):
-        with open(TUTORIAL_PDF, "rb") as f:
+    st.write( "‼ Recomendaciones: fondo claro, una sola mano que se vea completa y bien iluminada.\n"
+             "1- Elegí tu mano (diestro/zurdo) para calibrar el modelo.\n"
+             "2- Tomá la foto, o subí una desde tus archivos. ¡Y listo!" )
+    if file_exists(tutorial):
+        show_pdf(tutorial, height=820)
+        with open(tutorial, "rb") as f:
             st.download_button(
-                "⬇️ Descargar tutorial (PDF)",
+                "⬇️ Descargar tutorial completo de como usar SIGNIA (PDF)",
                 data=f,
-                file_name="SIGNIA_Tutorial.pdf",
+                file_name="tutorial.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
+    else:
+        st.info("📘 El tutorial no está disponible por el momento.")
+
 
 # =========================
 # TAB: DEMO (LIVE o LITE)
 # =========================
 with tab_demo:
-    st.caption("Elegí modo LIVE/LITE por variable de entorno LIVE_MODE (1/0).")
+    #st.caption("Elegí modo LIVE/LITE por variable de entorno LIVE_MODE (1/0).")
 
     # -------- LITE (sin WebRTC) --------
     if not LIVE_MODE:
         col1, col2 = st.columns(2)
         with col1:
-            img_cam = st.camera_input("Tomá una foto de tu seña (modo selfie)")
+            img_cam = st.camera_input("Tomá una foto de tu seña")
         with col2:
             img_up = st.file_uploader("…o subí una imagen", type=["jpg", "jpeg", "png"])
 
@@ -205,7 +196,7 @@ with tab_demo:
             st.info("Esperando una imagen…")
             st.stop()
 
-        # Decodificar
+        # Decodificar y espejar (para mantener modo selfie)
         nparr = np.frombuffer(img_bytes, np.uint8)
         bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if bgr is None:
@@ -213,16 +204,8 @@ with tab_demo:
             free_vars(img_bytes, nparr, bgr)
             st.stop()
 
-        # ===== CLAVE: ESPEJAR PARA QUE COINCIDA CON LA PREVIEW (modo selfie) =====
+        # Espejar para que coincida con la preview
         bgr = cv2.flip(bgr, 1)
-
-        # Opcional: limitar ancho para ahorrar recursos
-        max_w = 960
-        if bgr.shape[1] > max_w:
-            scale = max_w / bgr.shape[1]
-            bgr = cv2.resize(bgr, (int(bgr.shape[1]*scale), int(bgr.shape[0]*scale)),
-                             interpolation=cv2.INTER_AREA)
-
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
         with mp.solutions.hands.Hands(
@@ -231,27 +214,19 @@ with tab_demo:
             res = hands.process(rgb)
 
         if not res.multi_hand_landmarks:
-            st.error("No se detectó mano. Probá otra toma (fondo claro, mano completa).")
+            st.error("No se detectó mano. Probá otra toma.")
             free_vars(img_bytes, nparr, bgr, rgb, res)
             st.stop()
 
+        # Procesar landmarks
         lms = res.multi_hand_landmarks[0]
         pts = np.array([[lm.x, lm.y, lm.z] for lm in lms.landmark], dtype=float)
         vec = normalize_seq_xy(pts).reshape(-1)
+        pred = predict_with_model(vec, mano)
 
-        # Auto-hand ajustado a selfie: MediaPipe devuelve L/R del frame espejado -> invertimos
-        mano_base = mano
-        if auto_hand and res.multi_handedness:
-            label = res.multi_handedness[0].classification[0].label  # 'Left' o 'Right'
-            label_corr = swap_lr(label)  # corregir por selfie
-            mano_base = "Zurdo" if label_corr == "Left" else "Diestro"
+        # Mostrar solo el resultado
+        st.success(f"✅ Predicción: **{pred}**")
 
-        pred = predict_with_model(vec, mano_base)
-
-        # SOLO la predicción (no mostramos imágenes para ahorrar recursos)
-        st.success(f"✅ Predicción: **{pred}** · Mano usada: **{mano_base}**")
-
-        # Limpieza de memoria
         free_vars(img_bytes, nparr, bgr, rgb, res, lms, pts, vec)
         st.stop()
 
@@ -285,13 +260,12 @@ with tab_demo:
                 self.buf = deque(maxlen=5)
                 self.pred = "…"
                 self._f = 0
-                self.mano_usada = "?"
 
             def recv(self, frame):
                 import av
                 img = frame.to_ndarray(format="bgr24")
 
-                # ===== CLAVE: ESPEJAR PARA QUE COINCIDA CON LA PREVIEW (modo selfie) =====
+                # Espejar frame (modo selfie)
                 img = cv2.flip(img, 1)
 
                 self._f += 1
@@ -304,19 +278,9 @@ with tab_demo:
                         lms = r.multi_hand_landmarks[0]
                         pts = np.array([[lm.x, lm.y, lm.z] for lm in lms.landmark], dtype=float)
                         vec = normalize_seq_xy(pts).reshape(-1)
-
-                        # Auto-hand ajustado a selfie
-                        mano_base = mano
-                        if auto_hand and r.multi_handedness:
-                            label = r.multi_handedness[0].classification[0].label
-                            label_corr = swap_lr(label)  # corregimos por selfie
-                            mano_base = "Zurdo" if label_corr == "Left" else "Diestro"
-
-                        p = predict_with_model(vec, mano_base)
+                        p = predict_with_model(vec, mano)
                         self.buf.append(p)
                         self.pred = Counter(self.buf).most_common(1)[0][0]
-                        self.mano_usada = mano_base
-
                         mp.solutions.drawing_utils.draw_landmarks(
                             small, lms, mp.solutions.hands.HAND_CONNECTIONS,
                             mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
@@ -325,11 +289,9 @@ with tab_demo:
                     else:
                         self.buf.clear()
                         self.pred = "…"
-                        self.mano_usada = "?"
 
-                cv2.rectangle(small, (10, 10), (720, 70), (0, 0, 0), -1)
-                txt = f"Predicción: {self.pred} · Mano: {self.mano_usada}"
-                cv2.putText(small, txt, (20, 55),
+                cv2.rectangle(small, (10, 10), (520, 70), (0, 0, 0), -1)
+                cv2.putText(small, f"Predicción: {self.pred}", (20, 55),
                             cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
                 return av.VideoFrame.from_ndarray(small, format="bgr24")
 

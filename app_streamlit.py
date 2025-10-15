@@ -3,7 +3,6 @@ from joblib import load
 import numpy as np
 import mediapipe as mp
 import cv2
-from collections import Counter
 
 st.set_page_config(page_title="SIGNIA - LSA en tiempo real", layout="wide")
 st.title("SIGNIA – Reconocimiento de señas (demo web)")
@@ -31,30 +30,41 @@ def normalize_seq_xy(seq_xyz):
 with st.sidebar:
     st.header("Ajustes")
     modo = st.radio("Elegí tu mano", ["Diestro", "Zurdo"], index=0)
+    forzar_espejo = st.toggle("Forzar vista espejo (debug)", value=False)
 
 st.info("📷 Usa la cámara para capturar una imagen y obtener la predicción.")
 
 # ---- Cámara ----
-st.markdown("""
+img_file = st.camera_input("Sacá una foto de tu seña")
+
+# ---- Inyectar CSS para controlar el espejo ----
+st.markdown(f"""
 <style>
-/* Fuerza al preview del componente de cámara a NO espejarse */
-[data-testid="stCameraInput"] video {
-  transform: scaleX(1) !important;
-}
+[data-testid="stCameraInput"] video,
+[data-testid="stMediaStream"] video,
+video[style*="transform: scaleX(-1)"],
+canvas[style*="transform: scaleX(-1)"] {{
+  -webkit-transform: scaleX({-1 if forzar_espejo else 1}) !important;
+  transform: scaleX({-1 if forzar_espejo else 1}) !important;
+}}
+[data-testid="stCameraInput"] canvas {{
+  -webkit-transform: scaleX({-1 if forzar_espejo else 1}) !important;
+  transform: scaleX({-1 if forzar_espejo else 1}) !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
-img_file = st.camera_input("Sacá una foto de tu seña")
-
+# ---- Procesamiento de imagen ----
 if img_file is not None:
-    # Leer la imagen como array
     bytes_data = img_file.getvalue()
     nparr = np.frombuffer(bytes_data, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
+    # Mostrar la imagen capturada (sin invertir)
+    st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="📸 Imagen capturada (sin espejar)")
+
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    # Procesar con mediapipe
     with mp.solutions.hands.Hands(
         static_image_mode=True,
         max_num_hands=1,
@@ -63,7 +73,10 @@ if img_file is not None:
         result = hands.process(rgb)
 
         if result.multi_hand_landmarks:
-            pts = np.array([[lm.x, lm.y, lm.z] for lm in result.multi_hand_landmarks[0].landmark], dtype=float)
+            pts = np.array(
+                [[lm.x, lm.y, lm.z] for lm in result.multi_hand_landmarks[0].landmark],
+                dtype=float
+            )
             seq = normalize_seq_xy(pts)
             vec = seq.reshape(-1)
 

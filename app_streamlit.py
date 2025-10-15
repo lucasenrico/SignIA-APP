@@ -23,7 +23,7 @@ LIVE_MODE = os.getenv("LIVE_MODE", "0") in ("1", "true", "True")
 BUILD_TAG = os.getenv("RENDER_GIT_COMMIT", "local")[:7]
 
 ASSET_LOGO = "assets/logo.png"
-PDF_TUTORIAL = "docs/tutorial.pdf"
+tutorial = "docs/tutorial.pdf"
 
 TURN_URL = os.getenv("TURN_URL", "turn:openrelay.metered.ca:80")
 TURN_USERNAME = os.getenv("TURN_USERNAME", "openrelayproject")
@@ -126,16 +126,16 @@ tab_demo, tab_tutorial = st.tabs(["🎥 Demo", "📘 Tutorial"])
 with tab_tutorial:
     st.subheader("Cómo usar SIGNIA")
     st.write(
-        "- Recomendaciones: fondo claro, mano completa y bien iluminada.\n"
-        "- Elegí tu mano (diestro/zurdo) para calibrar el modelo.\n"
-        "- En LIVE, probá con buena conexión para WebRTC."
+        "‼ Recomendaciones: fondo claro, una sola mano que se vea completa y bien iluminada.\n"
+        "1- Elegí tu mano (diestro/zurdo) para calibrar el modelo.\n"
+        "2- Tomá la foto, o subí una desde tus archivos. Y listo!"
     )
 
-    show_pdf(PDF_TUTORIAL, height=820)
+    show_pdf(tutorial, height=820)
 
     # Botón de descarga
-    if file_exists(PDF_TUTORIAL):
-        with open(PDF_TUTORIAL, "rb") as f:
+    if file_exists(tutorial):
+        with open(tutorial, "rb") as f:
             st.download_button(
                 "⬇️ Descargar tutorial (PDF)",
                 data=f,
@@ -188,8 +188,8 @@ with tab_demo:
         if not res.multi_hand_landmarks:
             st.error("No se detectó mano. Probá otra toma (fondo claro, mano completa).")
             # Mostrar en espejo para vista del usuario
-            rgb_vis = cv2.flip(rgb, 1)
-            st.image(rgb_vis, caption=f"Vista {origen} (espejo)", use_container_width=True)
+            #rgb_vis = cv2.flip(rgb, 1)
+            #st.image(rgb_vis, caption=f"Vista {origen} (espejo)", use_container_width=True)
             st.stop()
 
         # Extraer landmarks
@@ -288,3 +288,4 @@ with tab_demo:
             async_processing=True,
             video_html_attrs={"playsinline": True, "autoPlay": True, "muted": True, "controls": False},
         )
+

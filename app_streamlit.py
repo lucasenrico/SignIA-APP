@@ -19,6 +19,17 @@ st.set_page_config(
     layout="wide"
 )
 
+# Forzar preview de cámara NO ESPEJO en st.camera_input (solo la vista previa)
+st.markdown("""
+<style>
+/* Vista previa de cámara en el widget de Streamlit (LITE) */
+[data-testid="stCameraInput"] video,
+[data-testid="stCameraInput"] canvas {
+    transform: none !important;   /* sin espejo */
+}
+</style>
+""", unsafe_allow_html=True)
+
 LIVE_MODE = os.getenv("LIVE_MODE", "0") in ("1", "true", "True")
 BUILD_TAG = os.getenv("RENDER_GIT_COMMIT", "local")[:7]
 
@@ -128,18 +139,16 @@ with tab_tutorial:
     st.write(
         "‼ Recomendaciones: fondo claro, una sola mano que se vea completa y bien iluminada.\n"
         "1- Elegí tu mano (diestro/zurdo) para calibrar el modelo.\n"
-        "2- Tomá la foto, o subí una desde tus archivos. Y listo!"
+        "2- Tomá la foto, o subí una desde tus archivos. ¡Listo!"
     )
-
     show_pdf(tutorial, height=820)
 
-    # Botón de descarga
     if file_exists(tutorial):
         with open(tutorial, "rb") as f:
             st.download_button(
                 "⬇️ Descargar tutorial (PDF)",
                 data=f,
-                file_name="SIGNIA_Tutorial.pdf",
+                file_name="tutorial.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
@@ -177,7 +186,7 @@ with tab_demo:
             st.error("No se pudo leer la imagen.")
             st.stop()
 
-        # Procesar sin espejo (para no confundir izquierda/derecha)
+        # Procesar SIN espejo (coherencia L/R) y SIN mostrar imagen
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
         with mp.solutions.hands.Hands(
@@ -187,9 +196,6 @@ with tab_demo:
 
         if not res.multi_hand_landmarks:
             st.error("No se detectó mano. Probá otra toma (fondo claro, mano completa).")
-            # Mostrar en espejo para vista del usuario
-            #rgb_vis = cv2.flip(rgb, 1)
-            #st.image(rgb_vis, caption=f"Vista {origen} (espejo)", use_container_width=True)
             st.stop()
 
         # Extraer landmarks
@@ -198,17 +204,11 @@ with tab_demo:
         vec = normalize_seq_xy(pts).reshape(-1)
         pred = predict_letter(vec, mano)
 
-        # Dibujar sobre la imagen (sin espejo) y luego espejar SOLO para mostrar
-        mp.solutions.drawing_utils.draw_landmarks(
-            rgb, lms, mp.solutions.hands.HAND_CONNECTIONS,
-            mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
-            mp.solutions.drawing_styles.get_default_hand_connections_style(),
-        )
+        # (Opcional) podrías dibujar en 'rgb' pero NO mostramos imagen.
+        # mp.solutions.drawing_utils.draw_landmarks(...)
 
+        # Mostrar SOLO la predicción (sin imágenes)
         st.success(f"✅ Predicción: **{pred}**")
-        rgb_vis = cv2.flip(rgb, 1)  # espejo para vista
-        st.image(rgb_vis, caption=f"Procesada desde {origen} (espejo)", use_container_width=True)
-
         st.stop()
 
     # -------- LIVE (WebRTC): streaming en tiempo real --------
@@ -217,7 +217,7 @@ with tab_demo:
             from streamlit_webrtc import (
                 webrtc_streamer, VideoProcessorBase, RTCConfiguration, WebRtcMode
             )
-        except Exception as e:
+        except Exception:
             st.error("Falta `streamlit-webrtc`. Instalalo con `pip install streamlit-webrtc`.")
             st.stop()
 
@@ -245,15 +245,14 @@ with tab_demo:
             def recv(self, frame):
                 import av
                 img = frame.to_ndarray(format="bgr24")
-                img = cv2.flip(img, 1)  # espejo siempre en LIVE ✅
+                # SIN espejo: mostramos la cámara tal cual llega
 
                 self._f += 1
                 small = cv2.resize(img, (TARGET_W, TARGET_H), interpolation=cv2.INTER_AREA)
 
                 if self._f % SKIP_N == 0:
-                    # OJO: como espejamos para mostrar, para procesar volvemos a 'des-espejar'
-                    proc = cv2.flip(small, 1)  # procesar en no-espejo para mantener coherencia L/R
-                    rgb = cv2.cvtColor(proc, cv2.COLOR_BGR2RGB)
+                    # Procesar tal cual (sin flips)
+                    rgb = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
                     r = self.hands.process(rgb)
                     if r.multi_hand_landmarks:
                         lms = r.multi_hand_landmarks[0]
@@ -263,7 +262,6 @@ with tab_demo:
                         self.buf.append(p)
                         self.pred = Counter(self.buf).most_common(1)[0][0]
 
-                        # Dibujamos landmarks SOBRE la imagen mostrada (espejo)
                         mp.solutions.drawing_utils.draw_landmarks(
                             small, lms, mp.solutions.hands.HAND_CONNECTIONS,
                             mp.solutions.drawing_styles.get_default_hand_landmarks_style(),
@@ -288,4 +286,3 @@ with tab_demo:
             async_processing=True,
             video_html_attrs={"playsinline": True, "autoPlay": True, "muted": True, "controls": False},
         )
-

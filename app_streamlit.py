@@ -140,20 +140,32 @@ tab_demo, tab_tutorial = st.tabs(["🎥 Demo", "📘 Tutorial"])
 # TAB: TUTORIAL
 # =========================
 with tab_tutorial:
-    st.subheader("Cómo usar SIGNIA")
-    st.write("""‼ Recomendaciones: fondo claro, una sola mano que se vea completa y bien iluminada.
-1- Elegí tu mano (diestro/zurdo) para calibrar el modelo.
-2- Tomá la foto, o subí una desde tus archivos. ¡Y listo!""")
+    st.subheader("📘 Cómo usar SIGNIA")
+    st.markdown("""
+    ✅ **Recomendaciones:**
+    - 🌞 Fondo claro, buena iluminación.  
+    - ✋ Solo una mano completa y visible.  
+
+    🚀 **Pasos para usar:**
+    1️⃣ Elegí tu mano (diestro / zurdo) para calibrar el modelo.  
+    2️⃣ Tomá una foto o subí una imagen desde tus archivos.  
+    3️⃣ ¡Listo! El sistema reconocerá la seña y mostrará la letra.  
+    """, unsafe_allow_html=True)
+
     if file_exists(TUTORIAL_PDF):
-        show_pdf(TUTORIAL_PDF, height=820)
+        # Botón de descarga inmediatamente debajo del texto
         with open(TUTORIAL_PDF, "rb") as f:
             st.download_button(
-                "⬇️ Descargar tutorial completo de como usar SIGNIA (PDF)",
+                "⬇️ Descargar tutorial completo en PDF",
                 data=f,
-                file_name="tutorial.pdf",
+                file_name="SIGNIA_Tutorial.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
+
+        # Mostrar el PDF embebido más abajo
+        st.markdown("---")
+        show_pdf(TUTORIAL_PDF, height=820)
     else:
         st.info("📘 El tutorial no está disponible por el momento.")
 
@@ -290,3 +302,4 @@ with tab_demo:
             async_processing=True,
             video_html_attrs={"playsinline": True, "autoPlay": True, "muted": True, "controls": False},
         )
+

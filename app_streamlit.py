@@ -147,9 +147,9 @@ with tab_tutorial:
     - ✋ Solo una mano completa y visible.  
 
     🚀 **Pasos para usar:**
-    1️⃣ Elegí tu mano (diestro / zurdo) para calibrar el modelo.  
-    2️⃣ Tomá una foto o subí una imagen desde tus archivos.  
-    3️⃣ ¡Listo! El sistema reconocerá la seña y mostrará la letra.  
+    1️- Elegí tu mano (diestro / zurdo) para calibrar el modelo.  
+    2️- Tomá una foto o subí una imagen desde tus archivos.  
+    3️- ¡Listo! El sistema reconocerá la seña y mostrará la letra.  
     """, unsafe_allow_html=True)
 
     if file_exists(TUTORIAL_PDF):
@@ -302,4 +302,5 @@ with tab_demo:
             async_processing=True,
             video_html_attrs={"playsinline": True, "autoPlay": True, "muted": True, "controls": False},
         )
+
 
